@@ -5,9 +5,6 @@ from simple_parsing import ArgumentParser
 import os
 from PIL import Image
 from datetime import date
-import imageio
-import pyheif
-import io
 from tqdm import tqdm
 
 from wmr.utils import get_method
@@ -43,7 +40,7 @@ def read_images(track: str):
     trackpathname = "BlackBox" if track == "black" else "BeigeBox"
     images_path = os.path.join("data", f"Neurips24_ETI_{trackpathname}")
     # Read all .png images in this folder, in order
-    num_images = 100
+    num_images = 100 if track == "black" else 300
     images = []
     for i in range(num_images):
         image_path = os.path.join(images_path, f"{i}.png")

@@ -1,4 +1,5 @@
 from wmr.compression import CompressionRemoval
+# from bbeval.models.pytorch.wrapper import PyTorchModelWrapper
 
 def get_method(method: str):
     mapping = {
@@ -12,3 +13,8 @@ def get_method(method: str):
 def get_models_path():
     # TODO: Replace with ENV variable
     return "/home/groot/work/erasing-the-invisible/models"
+
+# class DetectionWrapped(PyTorchModelWrapper):
+#     def __init__(self, model):
+#         super().__init__(model_config=None)
+#         self.model = model

@@ -11,19 +11,21 @@ import torch.nn as nn
 from torchvision.models import resnet18
 
 from wmr.base import Removal
-from wmr.utils import get_models_path
+from wmr.utils import get_models_path, PyTorchModelWrapper
+
 from bbeval.attacker.transfer_methods import SMIMIFGSM
-from bbeval.config import TransferredAttackConfig, AttackerConfig, ExperimentConfig
-from bbeval.models.core import GenericModelWrapper
+from bbeval.config import TransferredAttackConfig, AttackerConfig, ExperimentConfig, ModelConfig
 
 
 def prepare_detection_model(model_path: str):
     model = resnet18(pretrained=False)
-    model.fc = nn.Linear(model.fc.in_features, 2)  # Binary classification: 2 classes
+    model.fc = nn.Linear(model.fc.in_features, 2)
     model.load_state_dict(ch.load(model_path))
     model.eval()
     model = ch.compile(model)
-    return model
+
+    wrapped_model = PyTorchModelWrapper(model)
+    return wrapped_model
 
 
 class BypassDetection(Removal):
@@ -35,6 +37,21 @@ class BypassDetection(Removal):
         super().__init__(args)
         # We want real/wm to say "real", and unwm/wm to say "unwm"
         # For all three available detection methods, so targeting 6 models all in all
+
+        # TODO: Add missing entries required for config
+        attacker_config = AttackerConfig(
+            name="SMIMIFGSM_transfer",
+            eps=4.0,
+            targeted=True,
+            norm_type=np.inf,
+            track_global_metrics=False,
+            track_local_metrics=False,
+            time_based_attack=False
+        )
+        config = ExperimentConfig(
+            experiment_name="bypass_detection",
+
+        )
         
         # All models in get_models_path that start with "adv_cls_" are detection models
         aux_models = {}
@@ -51,8 +68,8 @@ class BypassDetection(Removal):
         self.attacker = SMIMIFGSM(
             model=self.model, # TODO: wrap in GenericModelWrapper,
             aux_models=aux_models,
-            config=config, # AttackerConfig
-            experiment_config=experiment_config # ExperimentConfig
+            config=attacker_config, # AttackerConfig
+            experiment_config=ExperimentConfig # ExperimentConfig
         )
     
     def remove_watermark(self, original_image):
@@ -62,7 +79,7 @@ class BypassDetection(Removal):
         num_trials = 10
         adv_images = []
         for _ in range(num_trials):
-            adv_image, _ = self.attacker.attack(original_image_pt)
+            adv_image, _ = self.attacker.attack(original_image_pt, y_target=[0])
             adv_images.append(adv_image)
 
         # Average the adversarial images
