@@ -31,7 +31,7 @@ class CompressionRemoval(Removal):
     def remove_watermark(self, original_image):
         quality = 75  # Default quality for compression
 
-        quantization_color_coverage = 0.95
+        quantization_color_coverage = 0.85
         # Out of curiosity, count how many colors the image has (unique)
         # Perhaps histogram instead?
         hist_counts = np.unique(np.asarray(original_image), return_counts=True)[1][::-1]

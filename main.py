@@ -29,6 +29,9 @@ def main(args):
     for i, image in enumerate(watermark_removed_images):
         image.save(os.path.join(submission_folder, f"{i}.png"))
     
+    if args.skip_zip:
+        return
+
     # Zip this folder (images inside it, not the entire folder)
     os.system(f"zip -jr {submission_folder}.zip {submission_folder}")
 
@@ -54,6 +57,7 @@ if __name__ == "__main__":
     arg_parser.add_argument("--track", type=str, choices=["black", "beige"], default="black", help="Track to target (black/beige)")
     arg_parser.add_argument("--submission", type=str, default="submission", help="Name for submission attempt")
     arg_parser.add_argument("--method", type=str, default="submission", help="Method to use for watermark removal")
+    arg_parser.add_argument("--skip_zip", action="store_true", help="Skip zipping the submission folder")
     args = arg_parser.parse_args()
 
     main(args)

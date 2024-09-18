@@ -1,9 +1,11 @@
 from wmr.compression import CompressionRemoval
+from wmr.low_pass import FilterRemoval
 # from bbeval.models.pytorch.wrapper import PyTorchModelWrapper
 
 def get_method(method: str):
     mapping = {
-        "compressions": CompressionRemoval,
+        "compression": CompressionRemoval,
+        'lowpass': FilterRemoval
     }
     method_cls = mapping.get(method, None)
     if method_cls is None:
