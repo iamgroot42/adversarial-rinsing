@@ -1,16 +1,19 @@
 from wmr.compression import CompressionRemoval
 from wmr.low_pass import FilterRemoval
+from wmr.latent_perturbations import VAERemoval
 # from bbeval.models.pytorch.wrapper import PyTorchModelWrapper
 
 def get_method(method: str):
     mapping = {
         "compression": CompressionRemoval,
-        'lowpass': FilterRemoval
+        'lowpass': FilterRemoval,
+        "vae": VAERemoval
     }
     method_cls = mapping.get(method, None)
     if method_cls is None:
         raise ValueError(f"Method {method} not found")
     return method_cls
+
 
 def get_models_path():
     # TODO: Replace with ENV variable

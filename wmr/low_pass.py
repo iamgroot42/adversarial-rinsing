@@ -75,17 +75,10 @@ class FilterRemoval(Removal):
     def __init__(self, args):
         super().__init__(args)
     
-    def remove_watermark(self, original_image):
+    def _remove_watermark(self, original_image):
         # FFT-based low-pass filter
         removals = []
         removals.append(remove_noise_fft_rgb(original_image, cutoff=50))
         removals.append(remove_noise_wavelet_rgb(original_image, level=1))
 
-        # Average the pixel values across the images
-        average_image_array = np.mean(np.stack(removals), axis=0)
-        average_image_array = average_image_array.astype(np.uint8)
-
-        # Convert the averaged array back to an image
-        average_image = Image.fromarray(average_image_array)
-
-        return average_image
+        return np.array(removals)

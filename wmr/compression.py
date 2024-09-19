@@ -28,7 +28,7 @@ class CompressionRemoval(Removal):
     def __init__(self, args):
         super().__init__(args)
     
-    def remove_watermark(self, original_image):
+    def _remove_watermark(self, original_image):
         quality = 75  # Default quality for compression
 
         quantization_color_coverage = 0.85
@@ -47,11 +47,4 @@ class CompressionRemoval(Removal):
         compressed_images.append(compress_webp(original_image, quality=quality))
         compressed_images.append(quantize(original_image, num_colors=colors_needed))
 
-        # Average the pixel values across the images
-        average_image_array = np.mean(np.stack(compressed_images), axis=0)
-        average_image_array = average_image_array.astype(np.uint8)
-
-        # Convert the averaged array back to an image
-        average_image = Image.fromarray(average_image_array)
-
-        return average_image
+        return np.array(compressed_images)

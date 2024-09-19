@@ -17,18 +17,15 @@ def main(args):
     # Initialize watermark-removal function
     method = get_method(args.method)(args)
 
-    # Apply watermark-removal function
-    watermark_removed_images = []
-    for image in tqdm(images, desc="Removing watermarks"):
-        watermark_removed_images.append(method.remove_watermark(image))
-
     # Save images for submission, and add today's date to name
     submission_folder = os.path.join("submissions", args.track, f"{args.method}_{args.submission}_{date.today()}")
     os.makedirs(submission_folder, exist_ok=True)
 
-    for i, image in enumerate(watermark_removed_images):
-        image.save(os.path.join(submission_folder, f"{i}.png"))
-    
+    for i, image in tqdm(enumerate(images), desc="Removing watermarks", total=len(images)):
+        # Apply watermark-removal function
+        watermarked_image = method.remove_watermark(image)
+        watermarked_image.save(os.path.join(submission_folder, f"{i}.png"))
+
     if args.skip_zip:
         return
 
@@ -55,6 +52,7 @@ def read_images(track: str):
 if __name__ == "__main__":
     arg_parser = ArgumentParser()
     arg_parser.add_argument("--track", type=str, choices=["black", "beige"], default="black", help="Track to target (black/beige)")
+    arg_parser.add_argument("--aggregation", type=str, choices=["mean", "random"], default="mean", help="Ways to aggregate multiple augmentations")
     arg_parser.add_argument("--submission", type=str, default="submission", help="Name for submission attempt")
     arg_parser.add_argument("--method", type=str, default="submission", help="Method to use for watermark removal")
     arg_parser.add_argument("--skip_zip", action="store_true", help="Skip zipping the submission folder")
