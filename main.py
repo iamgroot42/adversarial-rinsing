@@ -2,31 +2,37 @@
     Read given data, apply watermark-removal function, and generate images for submission.
 """
 from simple_parsing import ArgumentParser
+from pathlib import Path
 import os
 from PIL import Image
 from datetime import date
 from tqdm import tqdm
 
 from wmr.utils import get_method
+from wmr.config import ExperimentConfig
 
 
-def main(args):
+def main(config: ExperimentConfig):
     # Read images
-    images = read_images(args.track)
+    images = read_images(config.track)
 
     # Initialize watermark-removal function
-    method = get_method(args.method)(args)
+    methods = [get_method(method)(config) for method in config.methods]
+
+    methods_combined_name = "+".join(config.methods)
 
     # Save images for submission, and add today's date to name
-    submission_folder = os.path.join("submissions", args.track, f"{args.method}_{args.submission}_{date.today()}")
+    submission_folder = os.path.join("submissions", config.track, f"{methods_combined_name}_{config.submission}_{date.today()}")
     os.makedirs(submission_folder, exist_ok=True)
 
     for i, image in tqdm(enumerate(images), desc="Removing watermarks", total=len(images)):
-        # Apply watermark-removal function
-        watermarked_image = method.remove_watermark(image)
+        watermarked_image = image
+        # Apply watermark-removal function iteratively
+        for method in methods:
+            watermarked_image = method.remove_watermark(watermarked_image)
         watermarked_image.save(os.path.join(submission_folder, f"{i}.png"))
 
-    if args.skip_zip:
+    if config.skip_zip:
         return
 
     # Zip this folder (images inside it, not the entire folder)
@@ -50,12 +56,10 @@ def read_images(track: str):
 
 
 if __name__ == "__main__":
-    arg_parser = ArgumentParser()
-    arg_parser.add_argument("--track", type=str, choices=["black", "beige"], default="black", help="Track to target (black/beige)")
-    arg_parser.add_argument("--aggregation", type=str, choices=["mean", "random"], default="mean", help="Ways to aggregate multiple augmentations")
-    arg_parser.add_argument("--submission", type=str, default="submission", help="Name for submission attempt")
-    arg_parser.add_argument("--method", type=str, default="submission", help="Method to use for watermark removal")
-    arg_parser.add_argument("--skip_zip", action="store_true", help="Skip zipping the submission folder")
-    args = arg_parser.parse_args()
+    parser = ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--config", help="Specify config file", type=Path)
+    args = parser.parse_args()
+    config = ExperimentConfig.load(args.config, drop_extra_fields=False)
 
-    main(args)
+    main(config)

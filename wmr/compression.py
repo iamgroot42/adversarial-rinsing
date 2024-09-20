@@ -3,30 +3,40 @@ import io
 import numpy as np
 
 from wmr.base import Removal
+from wmr.config import ExperimentConfig
 
 
-# Function to compress the image as JPEG
 def compress_jpeg(image, quality: int=85):
+    """
+    Function to compress the image as JPEG
+    """
     buffer = io.BytesIO()
     image.save(buffer, format='JPEG', quality=quality)
     buffer.seek(0)
     return np.array(Image.open(buffer)).astype(np.float32)
 
-# Function to compress the image as WebP
+
 def compress_webp(image, quality: int=85):
+    """
+    Compress the image as WebP
+    """
     buffer = io.BytesIO()
     image.save(buffer, format='WEBP', quality=quality)
     buffer.seek(0)
     return np.array(Image.open(buffer)).astype(np.float32)
 
-# Quantize image (reduce number of unique colors)
+
 def quantize(image, num_colors: int = 256):
+    """
+    Quantize image (reduce number of unique colors)
+    """
     quantized = image.quantize(colors=num_colors).convert("RGB")
     return np.asarray(quantized).astype(np.float32)
 
+
 class CompressionRemoval(Removal):
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, config: ExperimentConfig):
+        super().__init__(config)
     
     def _remove_watermark(self, original_image):
         quality = 75  # Default quality for compression

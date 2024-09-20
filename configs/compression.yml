@@ -1,0 +1,4 @@
+aggregation: mean
+track: black
+methods: [compression]
+submission: jpeg75_webp75_quantize85
