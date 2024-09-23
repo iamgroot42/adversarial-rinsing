@@ -51,11 +51,10 @@ def read_images(track: str):
     images_path = os.path.join("data", f"Neurips24_ETI_{name_mapping[track]}")
 
     # Read all .png images in this folder, in order
-    num_images = len(os.listdir(images_path))
-    if track == "black" and num_images != 100:
-        raise ValueError("Expected 100 images for black track.")
-    if track == "biege" and num_images != 300:
-        raise ValueError("Expected 300 images for biege track.")
+    # Count number of files that end with .png
+    num_images = len([name for name in os.listdir(images_path) if name.endswith(".png")])
+    if track != "test" and num_images != 300:
+        raise ValueError(f"Expected 300 images for black/beige track, found {num_images}.")
 
     images = []
     for i in range(num_images):

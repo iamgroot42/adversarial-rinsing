@@ -15,10 +15,6 @@ def get_method(method: str):
     return method_cls
 
 
-def get_models_path():
-    # TODO: Replace with ENV variable
-    return "/home/groot/work/erasing-the-invisible/models"
-
 # class DetectionWrapped(PyTorchModelWrapper):
 #     def __init__(self, model):
 #         super().__init__(model_config=None)

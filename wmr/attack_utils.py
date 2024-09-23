@@ -142,17 +142,33 @@ def transformation_function(image, resize_to: int = 270):
 
     def jpeg_compression(x):
         # Randomly pick a quality in [90, 100] range
-        quality = int(pick_randomly(90, 99))
+        quality = int(pick_randomly(85, 99))
         jpeg_module = DiffJPEGCoding()
         quality = ch.tensor([quality]).to(x.device)
         jpeg = jpeg_module(x, quality)
         return jpeg
 
+    def fft_noise(x):
+        std = 0.1
+        # Differentiable FFT noise
+        fft_img = ch.fft.fft2(x)
+        # Add noise
+        fft_noisy_img = fft_img + ch.randn_like(x) * std
+        # Convert noisy image back to spatial domain
+        return ch.fft.ifft2(fft_noisy_img).real
+
+    def rotation(x):
+        # Random rotation in [9, 45] clockwise
+        angle = pick_randomly(9, 45)
+        return transforms.functional.rotate(x, int(angle))
+
     transformation_functions = [
         random_crop,
         gaussian_blur,
         gaussian_noise,
-        jpeg_compression
+        jpeg_compression,
+        fft_noise,
+        rotation
     ]
     # Randomly pick one of the transformation functions
     random_transform = transformation_functions[np.random.randint(0, len(transformation_functions))]
@@ -195,24 +211,18 @@ def smimifgsm_attack(aux_models: dict,
                      n_iters: int = 100,
                      step_size_alpha: float = 2.5,
                      num_transformations: int = 12,
+                     proportional_step_size: bool = True,
                      target=None,
-                     target_is_embedding: bool = False,
                      device: str = "cuda"):
     """
         Adapted from SMIMIFGSM implementation in https://github.com/iamgroot42/blackboxsok
         Supports optimization to fool some target classifier, or simply maximize distance from some embedding
     """
-    move_direction = 1
-    if target_is_embedding:
-        # Aim to maximize norm-distance and minimize cosine similarity
-        # criterion = ch.nn.MSELoss()
-        criterion = MSEandCosine()
-        
-    else:
-        # We want to minimize the target, unless targeted is True
-        criterion = ch.nn.BCEWithLogitsLoss()
-        if target is not None:
-            move_direction = -1
+    mse_criterion = MSEandCosine(alpha=0) # Ignore cosine similarity for the time being
+    classification_criterion = ch.nn.CrossEntropyLoss()
+    
+    class_one = ch.tensor([1]).to(device)
+    classification_ease_factor = 0.05
 
     if not isinstance(aux_models, dict):
         raise ValueError("Expected a dictionary of auxiliary models, even if single model provided")
@@ -220,7 +230,13 @@ def smimifgsm_attack(aux_models: dict,
     x_min_val, x_max_val = 0, 1.0
 
     n_model_ensemble = len(aux_models)
-    alpha = step_size_alpha * eps / n_iters
+    n_model_embed = sum([1 for model_name in aux_models if aux_models[model_name][1] == "embed"])
+    n_model_clasify = n_model_ensemble - n_model_embed
+
+    if proportional_step_size:
+        alpha = step_size_alpha * eps / n_iters
+    else:
+        alpha = step_size_alpha
     decay = 1.0
     momentum = 0
     lamda = 1 / num_transformations
@@ -235,7 +251,7 @@ def smimifgsm_attack(aux_models: dict,
     x_max = clip_by_tensor(x_orig + eps, x_min_val, x_max_val)
 
     for model_name in aux_models:
-        model = aux_models[model_name]
+        model, _ = aux_models[model_name]
         model.set_eval()  # Make sure model is in eval model
         model.zero_grad()  # Make sure no leftover gradients
 
@@ -246,9 +262,13 @@ def smimifgsm_attack(aux_models: dict,
         with ch.no_grad():
             losses = []
             for model_name in aux_models:
-                model = aux_models[model_name]
+                model, model_type = aux_models[model_name]
                 output = model(adv)
-                losses.append(criterion(output, target[model_name]).item())
+                if model_type == "embed":
+                    loss_ = mse_criterion(output, target[model_name])
+                else:
+                    loss_ = classification_criterion(output, class_one) * classification_ease_factor
+                losses.append(loss_.item())
             print(f"Step {i+1}/{n_iters} | Loss:", np.mean(losses), "| Losses:", losses)
         # """
 
@@ -265,18 +285,19 @@ def smimifgsm_attack(aux_models: dict,
             output = 0
             loss = 0
             for model_name in aux_models:
-                model = aux_models[model_name]
-                if target_is_embedding:
-                    output = model(transformation_function(adv, resize_to=resize_to))
-                    output_clone = output.clone()
-                    # Use target embedding specific to this model
-                    loss += criterion(output, target[model_name]) / n_model_ensemble
-                else:
-                    output += model(transformation_function(adv, resize_to=resize_to)) / n_model_ensemble
+                model, model_type = aux_models[model_name]
 
-            if not target_is_embedding:
+                if model_type == "embed":
+                    embed_output = model(transformation_function(adv, resize_to=resize_to))
+                    # Use target embedding specific to this model
+                    loss += mse_criterion(embed_output.clone(), target[model_name]) / n_model_embed
+                else:
+                    output += model(transformation_function(adv, resize_to=resize_to)) / n_model_clasify
+
+            if model_type != "embed":
                 output_clone = output.clone()
-                loss = criterion(output_clone, target)
+                # CE is very easy to optimize, so adjust loss ti be smaller
+                loss += classification_criterion(output_clone, class_one) * classification_ease_factor
 
             loss.backward()
             Gradients.append(adv.grad.data)
@@ -287,7 +308,7 @@ def smimifgsm_attack(aux_models: dict,
         grad = momentum * decay + grad / ch.mean(ch.abs(grad), dim=(1, 2, 3), keepdim=True)
         momentum = grad
 
-        adv = adv + (alpha * ch.sign(grad) * move_direction)
+        adv = adv + alpha * ch.sign(grad)
         adv = clip_by_tensor(adv, x_min, x_max)
         adv = V(adv, requires_grad=True)
 
