@@ -149,7 +149,7 @@ def transformation_function(image, resize_to: int = 270):
         return jpeg
 
     transformation_functions = [
-        # random_crop,
+        random_crop,
         gaussian_blur,
         gaussian_noise,
         jpeg_compression
@@ -172,11 +172,29 @@ def clip_by_tensor(t, t_min, t_max):
     return result
 
 
+class MSEandCosine(ch.nn.Module):
+    def __init__(self, alpha: float=0.5):
+        super().__init__()
+        self.alpha = alpha  # weight for combining MSE and cosine distance
+        self.mse = ch.nn.MSELoss()
+        self.csn = ch.nn.CosineSimilarity()
+
+    def forward(self, output, target):
+        mse_loss = self.mse(output, target)
+        # Flatten to compute cosine similarity
+        csn_loss = 1 - self.csn(output.view(output.size(0), -1), target.view(target.size(0), -1))
+
+        # Combined Loss
+        loss = (1 - self.alpha) * mse_loss + self.alpha * csn_loss
+        return loss
+
+
 def smimifgsm_attack(aux_models: dict,
                      x_orig: ch.Tensor,
                      eps: float = 4/255,
                      n_iters: int = 100,
                      step_size_alpha: float = 2.5,
+                     num_transformations: int = 12,
                      target=None,
                      target_is_embedding: bool = False,
                      device: str = "cuda"):
@@ -186,8 +204,10 @@ def smimifgsm_attack(aux_models: dict,
     """
     move_direction = 1
     if target_is_embedding:
-        # We want to maximize L2 norm distance from given target embeddin
-        criterion = ch.nn.MSELoss()
+        # Aim to maximize norm-distance and minimize cosine similarity
+        # criterion = ch.nn.MSELoss()
+        criterion = MSEandCosine()
+        
     else:
         # We want to minimize the target, unless targeted is True
         criterion = ch.nn.BCEWithLogitsLoss()
@@ -203,7 +223,6 @@ def smimifgsm_attack(aux_models: dict,
     alpha = step_size_alpha * eps / n_iters
     decay = 1.0
     momentum = 0
-    num_transformations = 12
     lamda = 1 / num_transformations
     resize_to = int(0.9 * 512)
 
@@ -230,7 +249,7 @@ def smimifgsm_attack(aux_models: dict,
                 model = aux_models[model_name]
                 output = model(adv)
                 losses.append(criterion(output, target[model_name]).item())
-            print("Loss:", np.mean(losses), "Losses:", losses)
+            print(f"Step {i}/{n_iters} | Loss:", np.mean(losses), "Losses:", losses)
         # """
 
         Gradients = []

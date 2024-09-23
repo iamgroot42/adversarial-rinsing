@@ -56,8 +56,8 @@ class VAERemoval(Removal):
                 target_embeddings[k] = v(image_tensor).detach()
 
         perturbed_image_tensor = smimifgsm_attack(self.model, image_tensor,
-                                                  eps=4/255, n_iters=100,
-                                                #   step_size_alpha=10.0, #5
+                                                  eps=8/255, n_iters=100,
+                                                  num_transformations=50,
                                                   step_size_alpha=2.5,
                                                   target=target_embeddings,
                                                   target_is_embedding=True,

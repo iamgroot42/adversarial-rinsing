@@ -1,0 +1,5 @@
+aggregation: mean
+track: test
+methods: [vae]
+submission: eps8_iters100_step2_50transforms_newnoise
+skip_zip: true
