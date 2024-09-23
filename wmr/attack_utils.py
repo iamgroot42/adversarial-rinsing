@@ -249,7 +249,7 @@ def smimifgsm_attack(aux_models: dict,
                 model = aux_models[model_name]
                 output = model(adv)
                 losses.append(criterion(output, target[model_name]).item())
-            print(f"Step {i}/{n_iters} | Loss:", np.mean(losses), "Losses:", losses)
+            print(f"Step {i+1}/{n_iters} | Loss:", np.mean(losses), "| Losses:", losses)
         # """
 
         Gradients = []

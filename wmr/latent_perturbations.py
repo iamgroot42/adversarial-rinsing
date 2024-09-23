@@ -15,7 +15,7 @@ class VAEModelWrapper:
         self.model = model
 
     def __call__(self, x):
-        x_ = 2.0 * x - 1.0
+        x_ = x # Will be normalized internally
         latent_mean = self.model.encode(x_).latent_dist.mean
         return latent_mean
 
@@ -56,9 +56,9 @@ class VAERemoval(Removal):
                 target_embeddings[k] = v(image_tensor).detach()
 
         perturbed_image_tensor = smimifgsm_attack(self.model, image_tensor,
-                                                  eps=8/255, n_iters=100,
+                                                  eps=8/255, n_iters=500,
                                                   num_transformations=50,
-                                                  step_size_alpha=2.5,
+                                                  step_size_alpha=5,
                                                   target=target_embeddings,
                                                   target_is_embedding=True,
                                                   device=self.device)
