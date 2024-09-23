@@ -43,10 +43,20 @@ def main(config: ExperimentConfig):
 
 
 def read_images(track: str):
-    trackpathname = "BlackBox" if track == "black" else "BeigeBox"
-    images_path = os.path.join("data", f"Neurips24_ETI_{trackpathname}")
+    name_mapping = {
+        "black": "BlackBox",
+        "biege": "BeigeBox",
+        "test": "Test"
+    }
+    images_path = os.path.join("data", f"Neurips24_ETI_{name_mapping[track]}")
+
     # Read all .png images in this folder, in order
-    num_images = 100 if track == "black" else 300
+    num_images = len(os.listdir(images_path))
+    if track == "black" and num_images != 100:
+        raise ValueError("Expected 100 images for black track.")
+    if track == "biege" and num_images != 300:
+        raise ValueError("Expected 300 images for biege track.")
+
     images = []
     for i in range(num_images):
         image_path = os.path.join(images_path, f"{i}.png")

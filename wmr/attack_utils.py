@@ -3,7 +3,10 @@ import torch as ch
 import gc
 from torch.autograd import Variable as V
 import torch.nn.functional as F
+from torchvision import transforms
+from diff_jpeg import DiffJPEGCoding
 import pywt
+
 
 def introduce_discontinuity(x: np.ndarray, block_size: int):
     """
@@ -103,21 +106,57 @@ def remove_noise_wavelet_rgb(image, wavelet: str='db1', level: int=1):
     return np.clip(denoised_image.astype(np.float32), 0., 255.)
 
 
-def transformation_function(x, resize_to: int = 270):
-    img_size = x.shape[-1]
-    img_resize = resize_to
-    rnd = ch.randint(low=img_resize, high=img_size, size=(1,), dtype=ch.int32)
-    rescaled = F.interpolate(x, size=[rnd, rnd], mode='bilinear', align_corners=False)
-    h_rem = img_size - rnd
-    w_rem = img_size - rnd
-    pad_top = ch.randint(low=0, high=h_rem.item(), size=(1,), dtype=ch.int32)
-    pad_bottom = h_rem - pad_top
-    pad_left = ch.randint(low=0, high=w_rem.item(), size=(1,), dtype=ch.int32)
-    pad_right = w_rem - pad_left
+def transformation_function(image, resize_to: int = 270):
 
-    padded = F.pad(rescaled, [pad_left.item(), pad_right.item(), pad_top.item(), pad_bottom.item()], value=0)
+    def pick_randomly(low, high, num: int = 5):
+        # Pick a value in [low, high] range at intervals of (high - low) / num
+        return np.random.choice(np.linspace(low, high, num))
 
-    return padded
+    def random_crop(x):
+        img_size = x.shape[-1]
+        img_resize = resize_to
+        rnd = ch.randint(low=img_resize, high=img_size, size=(1,), dtype=ch.int32)
+        rescaled = F.interpolate(x, size=[rnd, rnd], mode='bilinear', align_corners=False)
+        h_rem = img_size - rnd
+        w_rem = img_size - rnd
+        pad_top = ch.randint(low=0, high=h_rem.item(), size=(1,), dtype=ch.int32)
+        pad_bottom = h_rem - pad_top
+        pad_left = ch.randint(low=0, high=w_rem.item(), size=(1,), dtype=ch.int32)
+        pad_right = w_rem - pad_left
+
+        padded = F.pad(rescaled, [pad_left.item(), pad_right.item(), pad_top.item(), pad_bottom.item()], value=0)
+        return padded
+
+    def gaussian_blur(x):
+        # Pick a kernel-size in [4, 20] range
+        kernel_size = int(pick_randomly(4, 20))
+        # Make sure kernel-size is odd
+        kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
+        blur = transforms.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0))
+        return blur(x)
+
+    def gaussian_noise(x):
+        # Randomly pick a std in [0.02, 0.1] range
+        std = pick_randomly(0.02, 0.1)
+        return x + ch.randn_like(x) * std.item()
+
+    def jpeg_compression(x):
+        # Randomly pick a quality in [90, 100] range
+        quality = int(pick_randomly(90, 99))
+        jpeg_module = DiffJPEGCoding()
+        quality = ch.tensor([quality]).to(x.device)
+        jpeg = jpeg_module(x, quality)
+        return jpeg
+
+    transformation_functions = [
+        # random_crop,
+        gaussian_blur,
+        gaussian_noise,
+        jpeg_compression
+    ]
+    # Randomly pick one of the transformation functions
+    random_transform = transformation_functions[np.random.randint(0, len(transformation_functions))]
+    return random_transform(image)
 
 
 def clip_by_tensor(t, t_min, t_max):
@@ -184,7 +223,7 @@ def smimifgsm_attack(aux_models: dict,
     i = 0
     while i < n_iters:
 
-        """
+        # """
         with ch.no_grad():
             losses = []
             for model_name in aux_models:
@@ -192,7 +231,7 @@ def smimifgsm_attack(aux_models: dict,
                 output = model(adv)
                 losses.append(criterion(output, target[model_name]).item())
             print("Loss:", np.mean(losses), "Losses:", losses)
-        """
+        # """
 
         Gradients = []
         if adv.grad is not None:

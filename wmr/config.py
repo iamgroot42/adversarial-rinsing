@@ -16,7 +16,7 @@ class ExperimentConfig(Serializable):
     """Name for submission attempt."""
     methods: List[str]
     """Methods to use for watermark removal. Applied sequentially."""
-    track: str = field(choice(["black", "biege"]))
+    track: str = field(choice(["black", "biege", "test"]))
     """Which track to target?"""
     aggregation: str = field(choice(["mean", "random"]))
     """Aggregation method (valid if attack generates multiple perturbations)."""
