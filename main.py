@@ -22,7 +22,7 @@ def main(config: ExperimentConfig):
     methods_combined_name = "+".join(config.methods)
 
     # Save images for submission, and add today's date to name
-    submission_folder = os.path.join("submissions", config.track, f"{methods_combined_name}_{config.submission}_{date.today()}")
+    submission_folder = os.path.join("submissions", config.track, f"{config.aggregation}_{methods_combined_name}_{config.submission}_{date.today()}")
     os.makedirs(submission_folder, exist_ok=True)
 
     for i, image in tqdm(enumerate(images), desc="Removing watermarks", total=len(images)):

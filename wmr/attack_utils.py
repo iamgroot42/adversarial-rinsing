@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 from diff_jpeg import DiffJPEGCoding
 import pywt
+import kornia
 
 
 def introduce_discontinuity(x: np.ndarray, block_size: int):
@@ -24,8 +25,8 @@ def introduce_discontinuity(x: np.ndarray, block_size: int):
 
     for i in range(H // block_size):
         for j in range(W // block_size):
+            random_source = np.random.randint(0, num_transforms)
             for k in range(3):
-                random_source = np.random.randint(0, num_transforms)
                 new_x[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size, k] = x[random_source, i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size, k]
 
     return new_x
@@ -162,13 +163,25 @@ def transformation_function(image, resize_to: int = 270):
         angle = pick_randomly(9, 45)
         return transforms.functional.rotate(x, int(angle))
 
+    def motion_blur(x):
+        angle = pick_randomly(0, 180)
+        direction = pick_randomly(-1, 1)
+        return kornia.filters.motion_blur(x, kernel_size=15, direction=direction, angle=angle, border_type='constant')
+
+    def posterize(x):
+        # Random posterize in [4, 8] range
+        bits = int(pick_randomly(4, 6))
+        return kornia.enhance.posterize(x, bits)
+
     transformation_functions = [
         random_crop,
         gaussian_blur,
         gaussian_noise,
         jpeg_compression,
         fft_noise,
-        rotation
+        rotation,
+        motion_blur,
+        # posterize
     ]
     # Randomly pick one of the transformation functions
     random_transform = transformation_functions[np.random.randint(0, len(transformation_functions))]
@@ -252,7 +265,6 @@ def smimifgsm_attack(aux_models: dict,
 
     for model_name in aux_models:
         model, _ = aux_models[model_name]
-        model.set_eval()  # Make sure model is in eval model
         model.zero_grad()  # Make sure no leftover gradients
 
     i = 0
@@ -312,11 +324,9 @@ def smimifgsm_attack(aux_models: dict,
         adv = clip_by_tensor(adv, x_min, x_max)
         adv = V(adv, requires_grad=True)
 
-        # outputs the transferability
-        model.set_eval()  # Make sure model is in eval model
-        model.zero_grad()  # Make sure no leftover gradients
-
-        del output, output_clone
+        del output
+        if n_model_clasify > 0:
+            del output_clone
         ch.cuda.empty_cache()
         del loss
         gc.collect()  # Explicitly call the garbage collector

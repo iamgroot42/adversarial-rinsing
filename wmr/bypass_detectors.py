@@ -18,7 +18,7 @@ from bbeval.config import TransferredAttackConfig, AttackerConfig, ExperimentCon
 
 
 def prepare_detection_model(model_path: str):
-    model = resnet18(pretrained=False)
+    model = resnet18(weights=None)
     model.fc = nn.Linear(model.fc.in_features, 2)
     model.load_state_dict(ch.load(model_path))
     model.eval()
@@ -33,8 +33,8 @@ class BypassDetection(Removal):
         Similar logic to adversarial- add perturbations to images until exiting watermark detection models are fooled.
         Alternatively, could target watermark-extraction methods directly, or perhaps joint optimization for both?
     """
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, config):
+        super().__init__(config)
         # We want real/wm to say "real", and unwm/wm to say "unwm"
         # For all three available detection methods, so targeting 6 models all in all
 

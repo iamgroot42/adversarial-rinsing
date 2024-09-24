@@ -21,7 +21,7 @@ class Removal:
             if self.config.aggregation == "mean":
                 cleansed_image = average_images(cleansed_image)
             elif self.config.aggregation == "random":
-                cleansed_image = introduce_discontinuity(cleansed_image, block_size=8)
+                cleansed_image = introduce_discontinuity(cleansed_image, block_size=16)
             else:
                 raise NotImplementedError(f"Aggregation method {self.config.aggregation} not implemented")
 
