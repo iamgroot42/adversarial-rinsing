@@ -22,17 +22,27 @@ def main(config: ExperimentConfig):
     methods_combined_name = "+".join(config.methods)
 
     # Save images for submission, and add today's date to name
-    submission_folder = os.path.join("submissions", config.track, f"{config.aggregation}_{methods_combined_name}_{config.submission}_{date.today()}")
-    os.makedirs(submission_folder, exist_ok=True)
+    subname = f"{config.aggregation}_{methods_combined_name}_{config.submission}_{date.today()}"
+    if config.track != "test":
+        submission_folder = os.path.join("submissions", config.track, subname)
+        os.makedirs(submission_folder, exist_ok=True)
 
     for i, image in tqdm(enumerate(images), desc="Removing watermarks", total=len(images)):
+        # If not test-track and image exists, skip
+        if config.track != "test" and os.path.exists(os.path.join(submission_folder, f"{i}.png")):
+            continue
+
         watermarked_image = image
         # Apply watermark-removal function iteratively
         for method in methods:
             watermarked_image = method.remove_watermark(watermarked_image)
-        watermarked_image.save(os.path.join(submission_folder, f"{i}.png"))
 
-    if config.skip_zip:
+        if config.track != "test":
+            watermarked_image.save(os.path.join(submission_folder, f"{i}.png"))
+        else:
+            watermarked_image.save(os.path.join("submissions", config.track, f"{subname}.png"))
+
+    if config.skip_zip or config.track == "test":
         return
 
     # Zip this folder (images inside it, not the entire folder)
@@ -53,8 +63,12 @@ def read_images(track: str):
     # Read all .png images in this folder, in order
     # Count number of files that end with .png
     num_images = len([name for name in os.listdir(images_path) if name.endswith(".png")])
-    if track != "test" and num_images != 300:
-        raise ValueError(f"Expected 300 images for black/beige track, found {num_images}.")
+    if track != "test":
+        if num_images != 300:
+            raise ValueError(f"Expected 300 images for black/beige track, found {num_images}.")
+    else:
+        if num_images != 1:
+            raise ValueError(f"Expected 1 image for test track, found {num_images}.")
 
     images = []
     for i in range(num_images):

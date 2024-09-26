@@ -2,6 +2,7 @@ from wmr.compression import CompressionRemoval
 from wmr.low_pass import FilterRemoval
 from wmr.latent_perturbations import VAERemoval
 from wmr.augmentation_ensemble import FilterEnsemble
+from wmr.mixup import Mixup
 # from bbeval.models.pytorch.wrapper import PyTorchModelWrapper
 
 def get_method(method: str):
@@ -9,7 +10,8 @@ def get_method(method: str):
         "compression": CompressionRemoval,
         'lowpass': FilterRemoval,
         "vae": VAERemoval,
-        "filters": FilterEnsemble
+        "filters": FilterEnsemble,
+        "mixup": Mixup
     }
     method_cls = mapping.get(method, None)
     if method_cls is None:

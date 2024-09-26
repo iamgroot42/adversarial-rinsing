@@ -3,7 +3,7 @@ import torch as ch
 import gc
 from torch.autograd import Variable as V
 import torch.nn.functional as F
-from torchvision import transforms
+from torchvision.transforms import v2
 from diff_jpeg import DiffJPEGCoding
 import pywt
 import kornia
@@ -107,11 +107,7 @@ def remove_noise_wavelet_rgb(image, wavelet: str='db1', level: int=1):
     return np.clip(denoised_image.astype(np.float32), 0., 255.)
 
 
-def transformation_function(image, resize_to: int = 270):
-
-    def pick_randomly(low, high, num: int = 5):
-        # Pick a value in [low, high] range at intervals of (high - low) / num
-        return np.random.choice(np.linspace(low, high, num))
+def transformation_function(image, resize_to: int = 270, mixup_data=None):
 
     def random_crop(x):
         img_size = x.shape[-1]
@@ -128,29 +124,45 @@ def transformation_function(image, resize_to: int = 270):
         padded = F.pad(rescaled, [pad_left.item(), pad_right.item(), pad_top.item(), pad_bottom.item()], value=0)
         return padded
 
+    def horizontal_flip(x):
+        return v2.functional.hflip(x)
+        
+    def random_brightness(x):
+        brightness_factor = np.random.uniform(0.05, 0.3)
+        return kornia.enhance.adjust_brightness(x, brightness_factor)
+
+    def random_contrast(x):
+        contrast_factor = np.random.uniform(0.05, 0.3)
+        return kornia.enhance.adjust_contrast(x, contrast_factor)
+    
+    def random_saturation(x):
+        saturation_factor = np.random.uniform(-0.3, 0.3)
+        return kornia.enhance.adjust_saturation(x, saturation_factor)
+    
+    def random_hue(x):
+        hue_factor = np.random.uniform(-0.3 * np.pi, 0.3 * np.pi)
+        return kornia.enhance.adjust_hue(x, hue_factor)
+    
     def gaussian_blur(x):
-        # Pick a kernel-size in [4, 20] range
-        kernel_size = int(pick_randomly(4, 20))
+        kernel_size = np.random.randint(6, 25)
         # Make sure kernel-size is odd
         kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
-        blur = transforms.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0))
+        blur = v2.GaussianBlur(kernel_size=kernel_size, sigma=(0.1, 2.0))
         return blur(x)
 
     def gaussian_noise(x):
-        # Randomly pick a std in [0.02, 0.1] range
-        std = pick_randomly(0.02, 0.1)
-        return x + ch.randn_like(x) * std.item()
+        std = np.random.uniform(0.05, 0.2)
+        return x + ch.randn_like(x) * std
 
     def jpeg_compression(x):
-        # Randomly pick a quality in [90, 100] range
-        quality = int(pick_randomly(85, 99))
+        quality = np.random.randint(70, 90)
         jpeg_module = DiffJPEGCoding()
         quality = ch.tensor([quality]).to(x.device)
         jpeg = jpeg_module(x, quality)
         return jpeg
 
     def fft_noise(x):
-        std = 0.1
+        std = np.random.uniform(0.05, 0.2)
         # Differentiable FFT noise
         fft_img = ch.fft.fft2(x)
         # Add noise
@@ -160,18 +172,29 @@ def transformation_function(image, resize_to: int = 270):
 
     def rotation(x):
         # Random rotation in [9, 45] clockwise
-        angle = pick_randomly(9, 45)
-        return transforms.functional.rotate(x, int(angle))
+        angle = np.random.randint(5, 45)
+        return v2.functional.rotate(x, int(angle))
 
     def motion_blur(x):
-        angle = pick_randomly(0, 180)
-        direction = pick_randomly(-1, 1)
-        return kornia.filters.motion_blur(x, kernel_size=15, direction=direction, angle=angle, border_type='constant')
+        angle = np.random.randint(5, 175)
+        direction = np.random.choice([-1, 1])
+        return kornia.filters.motion_blur(x, kernel_size=15,
+                                          direction=direction,
+                                          angle=angle, border_type='constant')
 
-    def posterize(x):
-        # Random posterize in [4, 8] range
-        bits = int(pick_randomly(4, 6))
-        return kornia.enhance.posterize(x, bits)
+    def mixup(x):
+        # Take a random image from the mixup data
+        random_index = np.random.randint(0, len(mixup_data))
+        #0 Randomly select a mixup factor in [0.1, 0.3]
+        mixup_factor = np.random.uniform(0.1, 0.3)
+        mixup_image = mixup_data[random_index].unsqueeze(0).to(x.device)
+        mixed = x * (1 - mixup_factor) + mixup_image * mixup_factor
+        return mixed
+        sharpness_factor = np.random.uniform(1 - 0.25, 1 + 0.25)
+        return v2.functional.adjust_sharpness(x, sharpness_factor)
+
+    def equalize(x):
+        return v2.functional.equalize(x)
 
     transformation_functions = [
         random_crop,
@@ -181,11 +204,17 @@ def transformation_function(image, resize_to: int = 270):
         fft_noise,
         rotation,
         motion_blur,
-        # posterize
+        random_brightness,
+        random_contrast,
+        random_saturation,
+        random_hue,
+        horizontal_flip,
+        equalize,
+        mixup
     ]
     # Randomly pick one of the transformation functions
     random_transform = transformation_functions[np.random.randint(0, len(transformation_functions))]
-    return random_transform(image)
+    return random_transform(image), random_transform
 
 
 def clip_by_tensor(t, t_min, t_max):
@@ -226,6 +255,7 @@ def smimifgsm_attack(aux_models: dict,
                      num_transformations: int = 12,
                      proportional_step_size: bool = True,
                      target=None,
+                     mixup_data=None,
                      device: str = "cuda"):
     """
         Adapted from SMIMIFGSM implementation in https://github.com/iamgroot42/blackboxsok
@@ -270,7 +300,7 @@ def smimifgsm_attack(aux_models: dict,
     i = 0
     while i < n_iters:
 
-        # """
+        """
         with ch.no_grad():
             losses = []
             for model_name in aux_models:
@@ -282,7 +312,7 @@ def smimifgsm_attack(aux_models: dict,
                     loss_ = classification_criterion(output, class_one) * classification_ease_factor
                 losses.append(loss_.item())
             print(f"Step {i+1}/{n_iters} | Loss:", np.mean(losses), "| Losses:", losses)
-        # """
+        """
 
         Gradients = []
         if adv.grad is not None:
@@ -300,11 +330,13 @@ def smimifgsm_attack(aux_models: dict,
                 model, model_type = aux_models[model_name]
 
                 if model_type == "embed":
-                    embed_output = model(transformation_function(adv, resize_to=resize_to))
+                    transformed_image, tf_info = transformation_function(adv, resize_to=resize_to, mixup_data=mixup_data)
+                    embed_output = model(transformed_image)
                     # Use target embedding specific to this model
                     loss += mse_criterion(embed_output.clone(), target[model_name]) / n_model_embed
                 else:
-                    output += model(transformation_function(adv, resize_to=resize_to)) / n_model_clasify
+                    transformed_image, tf_info = transformation_function(adv, resize_to=resize_to, mixup_data=mixup_data)
+                    output += model(transformed_image) / n_model_clasify
 
             if model_type != "embed":
                 output_clone = output.clone()

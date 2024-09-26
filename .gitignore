@@ -165,3 +165,4 @@ data/*
 submissions/*
 models/*
 *.png
+augmentation_data/*.jpg

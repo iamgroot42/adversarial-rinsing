@@ -1,0 +1,4 @@
+aggregation: mean
+track: black
+methods: [vae]
+submission: 5e-4lr_20t_eps111_10_10_10_scs_mixup

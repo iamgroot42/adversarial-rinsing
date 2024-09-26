@@ -59,14 +59,13 @@ class FilterEnsemble(Removal):
         image_ch = ch.tensor(np.array(original_image)).unsqueeze(0).permute(0, 3, 1, 2)
         image_ch = image_ch.float() / 255.
 
-        # augmented.append(self._gaussian_blur(image_ch))
-        # augmented.append(self._motion_blur(image_ch))
+        augmented.append(self._gaussian_blur(image_ch))
+        augmented.append(self._motion_blur(image_ch))
         # augmented.append(self._rotation(image_ch))
-        # augmented.append(self._brightness(image_ch))
-        # augmented.append(self._contrast(image_ch))
-        # augmented.append(self._hue(image_ch))
-        # augmented.append(self._saturation(image_ch))
-        augmented.append(self._posterize(image_ch))
+        augmented.append(self._brightness(image_ch))
+        augmented.append(self._contrast(image_ch))
+        augmented.append(self._hue(image_ch))
+        augmented.append(self._saturation(image_ch))
         augmented.append(self._posterize(image_ch))
         
         all_together = np.array(augmented) * 255

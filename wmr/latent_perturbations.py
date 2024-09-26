@@ -2,6 +2,8 @@ import torch as ch
 import numpy as np
 from wmr.config import ExperimentConfig
 import os
+from PIL import Image
+from tqdm import tqdm
 
 from wmr.base import Removal
 from wmr.attack_utils import smimifgsm_attack, clip_by_tensor
@@ -47,13 +49,16 @@ class VAEModelWrapper:
 
 
 class DiffusionModelWrapper(VAEModelWrapper):
-    def __call__(self, x):
-        x_ = x * 2 - 1
-        latent_mean = self.model.vae.encode(x_).latent_dist.mean
-        return latent_mean
+    def __init__(self, model):
+        super().__init__(model.vae)
 
-    def zero_grad(self):
-        self.model.vae.zero_grad()
+    # def __call__(self, x):
+    #     x_ = x * 2 - 1
+    #     latent_mean = self.model.vae.encode(x_).latent_dist.mean
+    #     return latent_mean
+
+    # def zero_grad(self):
+    #     self.model.vae.zero_grad()
 
 
 class ClassificationWrapper(VAEModelWrapper):
@@ -124,8 +129,8 @@ class VAERemoval(Removal):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config)
         # CompVis/stable_diffusion_v1_4
-        stable_diffusion_v1_4 = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae").to(self.device)
-        # stable_diffusion_v2_1 = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to(self.device)
+        # stable_diffusion_v1_4 = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae").to(self.device)
+        stable_diffusion_v2_1 = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1").to(self.device)
         # stable_difffusion_3 = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-3-medium-diffusers", subfolder="vae").to(self.device)
         # openai/consistency-decoder
         consistency_decoder = ConsistencyDecoderVAE.from_pretrained("openai/consistency-decoder").to(self.device)
@@ -140,27 +145,35 @@ class VAERemoval(Removal):
         # resnet_18 = resnet18(weights=ResNet18_Weights.DEFAULT).to(self.device)
 
         # TODO: Do not hardcode this path
-        MODELS_PATH_ = "/home/groot/work/erasing-the-invisible/models"
-
+        # MODELS_PATH_ = "/home/groot/work/erasing-the-invisible/models"
         # Load up watermark detection model(s)
-        stable_sig = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stable_sig.pth"), self.device)
-        tree_ring = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_tree_ring.pth"), self.device)
-        stegastamp = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stegastamp.pth"), self.device)
+        # stable_sig = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stable_sig.pth"), self.device)
+        # tree_ring = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_tree_ring.pth"), self.device)
+        # stegastamp = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stegastamp.pth"), self.device)
 
         self.model = {
-            "CompVis/stable-diffusion-v1-4": (VAEModelWrapper(stable_diffusion_v1_4), "embed"),
-            # "stabilityai/stable-diffusion-2-1": (DiffusionModelWrapper(stable_diffusion_v2_1), "embed"),
+            # "CompVis/stable-diffusion-v1-4": (VAEModelWrapper(stable_diffusion_v1_4), "embed"),
+            "stabilityai/stable-diffusion-2-1": (DiffusionModelWrapper(stable_diffusion_v2_1), "embed"),
             "openai/consistency-decoder": (VAEModelWrapper(consistency_decoder), "embed"),
             # "stabilityai/stable-diffusion-3-medium-diffusers": (VAEModelWrapper(stable_difffusion_3), "embed"),
             # "resnet18": (ResnetWrapper(resnet_18), "embed"),
             # "openai/clip-vit-base-patch32": (CLIPWrapper(clip_vit_base_patch32), "embed"),
             # "facebook/dinov2-base": (DINOWrapper(dinov2_base), "embed"),
             # "stabilityai/sdxl-vae": (VAEModelWrapper(sdxl_vae), "embed")
-            "stable_sig": (ClassificationWrapper(stable_sig), "classify"),
-            "tree_ring": (ClassificationWrapper(tree_ring), "classify"),
-            "stegastamp": (ClassificationWrapper(stegastamp), "classify")
+            # "stable_sig": (ClassificationWrapper(stable_sig), "classify"),
+            # "tree_ring": (ClassificationWrapper(tree_ring), "classify"),
+            # "stegastamp": (ClassificationWrapper(stegastamp), "classify")
         }
-    
+
+        self.mixup_images = []
+        mixup_data_path = "/home/groot/work/erasing-the-invisible/augmentation_data"
+        # Open and read all .jpg images in mixup_data_path
+        for filename in os.listdir(mixup_data_path):
+            if filename.endswith(".jpg"):
+                image = ch.tensor(np.array(Image.open(os.path.join(mixup_data_path, filename)))).permute(2, 0, 1).unsqueeze(0) / 255.0
+                self.mixup_images.append(image)
+        self.mixup_images = ch.cat(self.mixup_images, dim=0)
+
     def _rinse_cycle(self, image_tensor,
                      eps:float,
                      n_iters: int = 25,
@@ -170,17 +183,20 @@ class VAERemoval(Removal):
             for k, (v, v_type) in self.model.items():
                 if v_type == "embed":
                     target_embeddings[k] = v(image_tensor).detach()
-        
+
         perturbed_image_tensor = smimifgsm_attack(self.model,
                                                   image_tensor,
                                                   eps=eps,
                                                   n_iters=n_iters,
                                                   num_transformations=20,
+                                                #   num_transformations=10,
                                                   proportional_step_size=False,
-                                                  step_size_alpha=1,
+                                                  # step_size_alpha=1,
+                                                  step_size_alpha=5e-4,
                                                   target=target_embeddings,
+                                                  mixup_data=self.mixup_images,
                                                   device=self.device)
-        
+
         # Decode with target model
         focus_model = self.model[decoding_model][0]
         perturbed_image_emb = focus_model(perturbed_image_tensor)
@@ -190,18 +206,30 @@ class VAERemoval(Removal):
 
     def _remove_watermark(self, original_image):
         image_tensor = ch.tensor(np.array(original_image)).permute(2, 0, 1).unsqueeze(0) / 255.0
-        image_tensor = image_tensor.to(self.device)
+        perturbed_image_tensor = image_tensor.to(self.device)
 
-        # Rinse cyclex3
-        perturbed_image_tensor = self._rinse_cycle(image_tensor, eps=1/255, n_iters=25) # 25
-        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=15) #15
-        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10) # 10
+        # Rinse cyclex3 [1, 1, 1]
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=25) # 25
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=15) #15
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10) # 10
 
-        # Clip to be within 3/255 eps of original image
-        capping_eps = 3/255
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=2/255, n_iters=25) # 25
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=15) #15
+        # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10) # 10
+
+        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10,
+                                                   decoding_model="stabilityai/stable-diffusion-2-1")
+        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10)
+        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10,
+                                                   decoding_model="stabilityai/stable-diffusion-2-1")
+
+        """
+        # Clip to be within 8/255 eps of original image
+        capping_eps = 8/255
         x_min = clip_by_tensor(image_tensor - capping_eps, 0, 1)
         x_max = clip_by_tensor(image_tensor + capping_eps, 0, 1)
         perturbed_image_tensor = clip_by_tensor(perturbed_image_tensor, x_min, x_max)
+        """
 
         # Convert to numpy and standard format to be later used by PIL
         perturbed_image = perturbed_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255
