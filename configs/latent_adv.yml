@@ -1,4 +1,0 @@
-aggregation: mean
-track: black
-methods: [vae]
-submission: eps1_iters50_step10_compvis_openai

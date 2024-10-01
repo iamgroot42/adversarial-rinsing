@@ -209,7 +209,7 @@ def transformation_function(image, resize_to: int = 270, mixup_data=None):
         random_saturation,
         random_hue,
         horizontal_flip,
-        equalize,
+        # equalize,
         mixup
     ]
     # Randomly pick one of the transformation functions

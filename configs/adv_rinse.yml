@@ -1,4 +1,8 @@
 aggregation: mean
 track: black
 methods: [vae]
-submission: 5e-4lr_20t_eps111_10_10_10_scs_mixup
+submission: 20t_eps11_5_5_scs_mixup_waves_5_10
+attack_config:
+  num_transformations: 20
+  eps_list: [1/255, 1/255]
+  n_iters: [5, 5]

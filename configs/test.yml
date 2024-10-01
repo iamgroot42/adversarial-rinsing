@@ -1,5 +1,9 @@
-aggregation: mean
 track: test
 methods: [vae]
-submission: eps8_iters100_step2_50transforms_newnoise
+aggregation: mean
+submission: blueberry
 skip_zip: true
+attack_config:
+  num_transformations: 20
+  eps_list: [1/255, 1/255]
+  n_iters: [5, 5]

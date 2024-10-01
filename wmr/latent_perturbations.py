@@ -14,6 +14,7 @@ from transformers import CLIPProcessor, CLIPModel, AutoModel
 
 from diffusers import AutoencoderKL, DiffusionPipeline, ConsistencyDecoderVAE
 
+from wmr.diffusion_utils import ReSDPipeline, DiffWMAttacker
 
 def load_surrogate_model(path, device: str):
     model = resnet18(weights=None)
@@ -44,7 +45,7 @@ class VAEModelWrapper:
     def decode(self, z):
         decoded_image = self.model.decode(z)
         decoded_image = decoded_image.sample
-        decoded_image = (decoded_image / 2 + 0.5)#.clamp(0, 1)
+        decoded_image = (decoded_image / 2 + 0.5).clamp(0, 1)
         return decoded_image
 
 
@@ -128,6 +129,7 @@ class VAERemoval(Removal):
     """
     def __init__(self, config: ExperimentConfig):
         super().__init__(config)
+        self.attack_config = self.config.attack_config
         # CompVis/stable_diffusion_v1_4
         # stable_diffusion_v1_4 = AutoencoderKL.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="vae").to(self.device)
         stable_diffusion_v2_1 = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1").to(self.device)
@@ -174,33 +176,52 @@ class VAERemoval(Removal):
                 self.mixup_images.append(image)
         self.mixup_images = ch.cat(self.mixup_images, dim=0)
 
+        # """
+        self.regeneration_pipe = ReSDPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-2-1",
+        )
+        self.regeneration_pipe.to(self.device)
+        # """
+
     def _rinse_cycle(self, image_tensor,
                      eps:float,
-                     n_iters: int = 25,
-                     decoding_model: str = "openai/consistency-decoder"):
+                     n_iters: int,
+                     decoding_model: str):
         with ch.no_grad():
             target_embeddings = {}
             for k, (v, v_type) in self.model.items():
                 if v_type == "embed":
                     target_embeddings[k] = v(image_tensor).detach()
 
+        # Input: [0, 1]
+        # Output: [0, 1]
         perturbed_image_tensor = smimifgsm_attack(self.model,
                                                   image_tensor,
                                                   eps=eps,
                                                   n_iters=n_iters,
-                                                  num_transformations=20,
+                                                  num_transformations=self.attack_config.num_transformations,
                                                 #   num_transformations=10,
                                                   proportional_step_size=False,
-                                                  # step_size_alpha=1,
-                                                  step_size_alpha=5e-4,
+                                                  step_size_alpha=self.attack_config.step_size_alpha,
+                                                #   step_size_alpha=5e-4,
                                                   target=target_embeddings,
                                                   mixup_data=self.mixup_images,
                                                   device=self.device)
 
+        """
         # Decode with target model
+        # Input: [0, 1] (converts to [-1, 1] internally).
+        # Output: [0, 1] range (converts from [-1, 1] internally).
         focus_model = self.model[decoding_model][0]
         perturbed_image_emb = focus_model(perturbed_image_tensor)
         perturbed_image_tensor = focus_model.decode(perturbed_image_emb)
+        """
+
+        # Regeneration, as done exactly in WAVES
+        # Sample a "strength" in [50, 200] range (int)
+        strength = np.random.randint(5, 10)
+        rinse_attacker = DiffWMAttacker(self.regeneration_pipe, noise_step=strength)
+        perturbed_image_tensor = rinse_attacker.attack(perturbed_image_tensor)
 
         return perturbed_image_tensor
 
@@ -217,11 +238,15 @@ class VAERemoval(Removal):
         # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=15) #15
         # perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10) # 10
 
-        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10,
-                                                   decoding_model="stabilityai/stable-diffusion-2-1")
-        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10)
-        perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor, eps=1/255, n_iters=10,
-                                                   decoding_model="stabilityai/stable-diffusion-2-1")
+        eps_list = self.attack_config.eps_list
+        n_iters_list = self.attack_config.n_iters
+        decoding_model_list = self.attack_config.decoding_models
+
+        for (eps, n_iters, decoding_model) in zip(eps_list, n_iters_list, decoding_model_list):
+            perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor,
+                                                       eps=eval(eps),
+                                                       n_iters=int(n_iters),
+                                                       decoding_model=decoding_model)
 
         """
         # Clip to be within 8/255 eps of original image
@@ -233,4 +258,5 @@ class VAERemoval(Removal):
 
         # Convert to numpy and standard format to be later used by PIL
         perturbed_image = perturbed_image_tensor.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255
+
         return perturbed_image
