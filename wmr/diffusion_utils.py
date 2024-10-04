@@ -195,7 +195,7 @@ class DiffWMAttacker:
 
     @torch.no_grad()
     def attack(self, image):
-        generator = torch.Generator(self.device).manual_seed(1024)
+        generator = torch.Generator(self.device).manual_seed(2024)
         latents_buf = []
         prompts_buf = []
         outs_buf = []

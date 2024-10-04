@@ -7,6 +7,12 @@ from torchvision.transforms import v2
 from diff_jpeg import DiffJPEGCoding
 import pywt
 import kornia
+from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
+
+from wmr.aesthetics import load_aesthetics_and_artifacts_models, clip_preprocess
+from wmr.differentiable_histogram import differentiable_histogram
+
+import lpips
 
 
 def introduce_discontinuity(x: np.ndarray, block_size: int):
@@ -193,9 +199,6 @@ def transformation_function(image, resize_to: int = 270, mixup_data=None):
         sharpness_factor = np.random.uniform(1 - 0.25, 1 + 0.25)
         return v2.functional.adjust_sharpness(x, sharpness_factor)
 
-    def equalize(x):
-        return v2.functional.equalize(x)
-
     transformation_functions = [
         random_crop,
         gaussian_blur,
@@ -209,7 +212,6 @@ def transformation_function(image, resize_to: int = 270, mixup_data=None):
         random_saturation,
         random_hue,
         horizontal_flip,
-        # equalize,
         mixup
     ]
     # Randomly pick one of the transformation functions
@@ -230,6 +232,7 @@ def clip_by_tensor(t, t_min, t_max):
     return result
 
 
+
 class MSEandCosine(ch.nn.Module):
     def __init__(self, alpha: float=0.5):
         super().__init__()
@@ -247,6 +250,108 @@ class MSEandCosine(ch.nn.Module):
         return loss
 
 
+class NormalizedImageQuality(ch.nn.Module):
+    def __init__(self, device: str = "cuda"):
+        super().__init__()
+        self.device = device
+        # self.fid = torch_metrics.FrechetInceptionDistance(device)
+        
+        self.lpips = lpips.LPIPS(net='alex')
+        self.lpips.to(self.device)
+    
+        self.aesthetic_models = load_aesthetics_and_artifacts_models(device)
+
+        self.target_aesthetics = None
+        self.target_artifacts = None
+    
+    def _nmi(self, x, y, bins: int = 100):
+        # Compute Normalized Mutual Information (NMI) between two images
+        # Use differentiable histogram form kornia
+        #_, hist_x = kornia.ehnance.image_histogram2d(x, n_bins=bins, min=0., max=1., return_pdf=True)
+        #_, hist_y = kornia.ehnance.image_histogram2d(y, n_bins=bins, min=0., max=1., return_pdf=True)
+
+        def entropy(p):
+            p = p + 1e-10  # To avoid log(0)
+            return -ch.sum(p * ch.log(p))
+
+        hists = differentiable_histogram(ch.cat([x, y], dim=0), bins=bins, min=0., max=1.)
+        H0 = entropy(np.sum(hist, axis=0))
+        H1 = entropy(np.sum(hist, axis=1))
+        H01 = entropy(np.reshape(hist, -1))
+
+        # return (H0 + H1) / H01
+
+    def _compute_aesthetics_and_artifacts_scores(self, image):
+        vision_model, rating_model, artifacts_model = self.aesthetic_models
+
+        def preprocess(x):
+            return x / x.norm(p=2, dim=-1, keepdim=True)
+
+        inputs = clip_preprocess(image)
+
+        vision_output = vision_model(pixel_values=inputs)
+        pooled_output = vision_output.pooler_output
+
+        embedding = preprocess(pooled_output)
+
+        rating = rating_model(embedding)
+        artifact = artifacts_model(embedding)
+
+        return rating.mean(), artifact.mean()
+
+    def _psnr(self, x, y):
+        # MSE in pytorch
+        mse = F.mse_loss(x, y)
+        # For too-low MSE values, PSNR will be too high
+        # To avoid division by zero, return a very low value
+        if mse < 1e-10:
+            return 100
+        return - 10 * ch.log10(mse)
+
+    def _ssim(self, x, y):
+        # Gaussian kernel
+        ssim_val = ssim(x, y, data_range=1.)
+        return ssim_val.mean()
+
+    def _lpips(self, x, y):
+        return self.lpips(x, y, normalize=True).mean()
+
+    def forward(self, output, target):
+        """
+            Output here is generated image, target is original image
+        """
+        #fid_score = self.fid.compute(output, target)
+
+        lpips_score = self._lpips(output, target)
+        psnr_score = self._psnr(output, target)
+        ssim_score = self._ssim(output, target)
+        outputs_aesthetics, outputs_artifacts = self._compute_aesthetics_and_artifacts_scores(output)
+
+        if self.target_aesthetics is None:
+            self.target_aesthetics, self.target_artifacts = self._compute_aesthetics_and_artifacts_scores(target)
+
+        delta_aesthetics = outputs_aesthetics - self.target_aesthetics
+        delta_artifacts = outputs_artifacts - self.target_artifacts
+
+        # Differentiable metrics!
+        weighted_scores = [
+            # (fid_score, 1.53e-3),  # FID
+            # (None, 5.07e-3), # CLIP FID
+            (psnr_score, -2.22e-3), # PSNR, works
+            (ssim_score, -1.13e-1), # SSIM, works
+            # (None, -9.88e-2), # NMI
+            (lpips_score, 3.41e-1), # LPIPS, works
+            (delta_aesthetics, 4.5e-2), # Delta-Aesthetics, works
+            (delta_artifacts, -1.44e-1), # Delta-Artifacts, works
+        ]
+
+        # Aggregate weighted scores
+        # print([i[0] for i in weighted_scores])
+        final_score = sum([score * weight for score, weight in weighted_scores])
+        # We want to minimize this score
+        return final_score
+
+
 def smimifgsm_attack(aux_models: dict,
                      x_orig: ch.Tensor,
                      eps: float = 4/255,
@@ -256,6 +361,8 @@ def smimifgsm_attack(aux_models: dict,
                      proportional_step_size: bool = True,
                      target=None,
                      mixup_data=None,
+                     image_quality_metric: ch.nn.Module = None,
+                     image_quality_multiplier: float = -1e6,
                      device: str = "cuda"):
     """
         Adapted from SMIMIFGSM implementation in https://github.com/iamgroot42/blackboxsok
@@ -300,7 +407,7 @@ def smimifgsm_attack(aux_models: dict,
     i = 0
     while i < n_iters:
 
-        """
+        # """
         with ch.no_grad():
             losses = []
             for model_name in aux_models:
@@ -311,8 +418,11 @@ def smimifgsm_attack(aux_models: dict,
                 else:
                     loss_ = classification_criterion(output, class_one) * classification_ease_factor
                 losses.append(loss_.item())
-            print(f"Step {i+1}/{n_iters} | Loss:", np.mean(losses), "| Losses:", losses)
-        """
+
+            if image_quality_metric is not None:
+                qual_loss = image_quality_metric(adv, x_orig).item()
+            print(f"Step {i+1}/{n_iters} | Quality Loss:", qual_loss, "| Loss:", np.mean(losses), "| Losses:", losses)
+        # """
 
         Gradients = []
         if adv.grad is not None:
@@ -342,6 +452,11 @@ def smimifgsm_attack(aux_models: dict,
                 output_clone = output.clone()
                 # CE is very easy to optimize, so adjust loss ti be smaller
                 loss += classification_criterion(output_clone, class_one) * classification_ease_factor
+            
+            # Add image quality metric if specified
+            if image_quality_metric is not None:
+                # TODO: Should consider much-higher weight for this loss (relative)
+                loss += image_quality_metric(adv, x_orig) * image_quality_multiplier
 
             loss.backward()
             Gradients.append(adv.grad.data)
