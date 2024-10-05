@@ -2,8 +2,8 @@ import torch as ch
 import numpy as np
 from wmr.config import ExperimentConfig
 import os
+import gc
 from PIL import Image
-from tqdm import tqdm
 
 from wmr.base import Removal
 from wmr.attack_utils import smimifgsm_attack, clip_by_tensor, NormalizedImageQuality
@@ -148,11 +148,11 @@ class VAERemoval(Removal):
         # resnet_18 = resnet18(weights=ResNet18_Weights.DEFAULT).to(self.device)
 
         # TODO: Do not hardcode this path
-        # MODELS_PATH_ = "/home/groot/work/erasing-the-invisible/models/wmd"
+        MODELS_PATH_ = "/home/groot/work/erasing-the-invisible/models/wmd"
         # Load up watermark detection model(s)
-        # stable_sig = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stable_sig.pth"), self.device)
-        # tree_ring = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_tree_ring.pth"), self.device)
-        # stegastamp = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stegastamp.pth"), self.device)
+        stable_sig = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stable_sig.pth"), self.device)
+        tree_ring = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_tree_ring.pth"), self.device)
+        stegastamp = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stegastamp.pth"), self.device)
 
         self.model = {
             # "CompVis/stable-diffusion-v1-4": (VAEModelWrapper(stable_diffusion_v1_4), "embed"),
@@ -180,6 +180,8 @@ class VAERemoval(Removal):
         self.regeneration_pipe = ReSDPipeline.from_pretrained(
             "stabilityai/stable-diffusion-2-1",
         )
+        # Disable progress bar
+        self.regeneration_pipe.set_progress_bar_config(disable=True)
         self.regeneration_pipe.to(self.device)
 
         # self.image_quality_metric = None
@@ -189,16 +191,37 @@ class VAERemoval(Removal):
                      eps:float,
                      n_iters: int,
                      decoding_model: str):
+        perturbed_image_tensor = image_tensor
+
+        with ch.no_grad():
+            if decoding_model == "waves":
+                # Regeneration, as done exactly in WAVES
+                # Sample a "strength" in [50, 200] range (int)
+                #strength = np.random.randint(10, 20)
+                strength = 10
+                rinse_attacker = DiffWMAttacker(self.regeneration_pipe, noise_step=strength)
+                perturbed_image_tensor = rinse_attacker.attack(perturbed_image_tensor).detach()
+            elif decoding_model != "none":
+                # Decode with target model
+                # Input: [0, 1] (converts to [-1, 1] internally).
+                # Output: [0, 1] range (converts from [-1, 1] internally).
+                focus_model = self.model[decoding_model][0]
+                perturbed_image_emb = focus_model(perturbed_image_tensor).detach()
+                perturbed_image_tensor = focus_model.decode(perturbed_image_emb).detach()
+
+        gc.collect()
+        ch.cuda.empty_cache()
+
         with ch.no_grad():
             target_embeddings = {}
             for k, (v, v_type) in self.model.items():
                 if v_type == "embed":
-                    target_embeddings[k] = v(image_tensor).detach()
+                    target_embeddings[k] = v(perturbed_image_tensor).detach()
 
         # Input: [0, 1]
         # Output: [0, 1]
         perturbed_image_tensor = smimifgsm_attack(self.model,
-                                                  image_tensor,
+                                                  perturbed_image_tensor,
                                                   eps=eps,
                                                   n_iters=n_iters,
                                                   num_transformations=self.attack_config.num_transformations,
@@ -209,22 +232,9 @@ class VAERemoval(Removal):
                                                   target=target_embeddings,
                                                   mixup_data=self.mixup_images,
                                                   image_quality_metric=self.image_quality_metric,
-                                                  device=self.device)
-    
-        if decoding_model == "waves":
-            # Regeneration, as done exactly in WAVES
-            # Sample a "strength" in [50, 200] range (int)
-            #strength = np.random.randint(10, 20)
-            strength = 10
-            rinse_attacker = DiffWMAttacker(self.regeneration_pipe, noise_step=strength)
-            perturbed_image_tensor = rinse_attacker.attack(perturbed_image_tensor)
-        else:
-            # Decode with target model
-            # Input: [0, 1] (converts to [-1, 1] internally).
-            # Output: [0, 1] range (converts from [-1, 1] internally).
-            focus_model = self.model[decoding_model][0]
-            perturbed_image_emb = focus_model(perturbed_image_tensor)
-            perturbed_image_tensor = focus_model.decode(perturbed_image_emb)
+                                                  image_quality_multiplier=self.attack_config.image_quality_multiplier,
+                                                  device=self.device,
+                                                  verbose=self.attack_config.verbose)
 
         return perturbed_image_tensor
 

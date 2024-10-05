@@ -3,7 +3,7 @@
     Borrowed from https://github.com/Yukun-Huang/pytorch-differentiable-histogram
 """
 import torch as ch
-from PIL import Image
+import gc
 from typing import Optional
 
 
@@ -27,10 +27,11 @@ def differentiable_histogram(input: ch.Tensor,
     batch_size, n_channels, n_values = input.shape
 
     # Compute the minimum and maximum values of the input tensor
-    if min is None:
-        min = input.min().item()
-    if max is None:
-        max = input.max().item()
+    with ch.no_grad():
+        if min is None:
+            min = input.min().item()
+        if max is None:
+            max = input.max().item()
     
     # Initialize the histogram tensor
     hist = ch.zeros(batch_size, n_channels, bins).to(input.device)
@@ -64,7 +65,9 @@ def differentiable_histogram(input: ch.Tensor,
     # Divide by the bin width
     hist = hist / delta
 
-    # Normalize the histogram
-    hist = hist / hist.sum(dim=-1, keepdim=True) * n_values
-    
+    # Normalize the histogram without flow of gradients
+    with ch.no_grad():
+        hist.data /= hist.data.sum(dim=-1, keepdim=True) * n_values
+    # hist = hist / detached_denom * n_values
+
     return hist

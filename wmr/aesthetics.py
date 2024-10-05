@@ -105,6 +105,8 @@ def load_model(weight_name, device: str="cuda"):
     model = AestheticScorer(config=config)
     model.load_state_dict(torch.load(weight_path, map_location=device, weights_only=True))
     model.eval()
+    model = model.to(device)
+    # model = torch.compile(model)
     return model
 
 
@@ -121,7 +123,7 @@ def clip_preprocess(image: torch.Tensor) -> torch.Tensor:
     # Center crop the image (Redundant when same size)
     # image = kornia.center_crop(image, output_size=(crop_size, crop_size))
     # Normalize the image
-    # resized_image = (resized_image - image_mean) / image_std
+    resized_image = (resized_image - image_mean) / image_std
     return resized_image
 
 
@@ -129,11 +131,11 @@ def load_aesthetics_and_artifacts_models(device: str = "cuda"):
     model = CLIPModel.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K")
     vision_model = model.vision_model
     vision_model.to(device)
+    vision_model.eval()
+    # vision_model = torch.compile(vision_model)
     del model
     #clip_processor = CLIPProcessor.from_pretrained("laion/CLIP-ViT-H-14-laion2B-s32B-b79K")
 
-    rating_model = load_model("aesthetics_scorer_rating_openclip_vit_h_14").to(device)
-    artifacts_model = load_model("aesthetics_scorer_artifacts_openclip_vit_h_14").to(
-        device
-    )
+    rating_model = load_model("aesthetics_scorer_rating_openclip_vit_h_14")
+    artifacts_model = load_model("aesthetics_scorer_artifacts_openclip_vit_h_14")
     return vision_model, rating_model, artifacts_model

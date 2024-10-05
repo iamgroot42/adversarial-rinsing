@@ -11,6 +11,9 @@ from tqdm import tqdm
 from wmr.utils import get_method
 from wmr.config import ExperimentConfig
 
+import torch
+torch.set_float32_matmul_precision('high')
+
 
 def main(config: ExperimentConfig):
     # Read images

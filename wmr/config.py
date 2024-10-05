@@ -45,3 +45,8 @@ class AttackConfig(Serializable):
     step_size_alpha: Optional[float] = 1.0
     """Step-size to use for the attack"""
     decoding_models: Optional[List[str]] = field(default_factory=lambda: ["stabilityai/stable-diffusion-2-1", "openai/consistency-decoder", "stabilityai/stable-diffusion-2-1"])
+    """List of decoding models to use when rinsing"""
+    image_quality_multiplier: Optional[float] = -1e-1
+    """Multiplier for image quality in the loss function"""
+    verbose: Optional[bool] = False
+    """Print out per-iteration statistics for attack?"""

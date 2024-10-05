@@ -6,7 +6,6 @@ import numpy as np
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput, StableDiffusionPipeline
 
 
-
 class ReSDPipeline(StableDiffusionPipeline):
     @torch.no_grad()
     def __call__(

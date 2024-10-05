@@ -232,6 +232,40 @@ def clip_by_tensor(t, t_min, t_max):
     return result
 
 
+def differentiable_nmi(X, Y, num_bins: int=100):
+    # Compute the histograms of X and Y
+    hist_X = differentiable_histogram(X, num_bins, min=0., max=1.)[0]
+    hist_Y = differentiable_histogram(Y, num_bins, min=0., max=1.)[0]
+    
+    # Compute the joint histogram of X and Y
+    joint_hist = differentiable_histogram(ch.stack([X.flatten(), Y.flatten()], dim=1), num_bins, min=0., max=1.)[0]
+    
+    # Compute the marginal probabilities
+    px = hist_X / ch.sum(hist_X)
+    py = hist_Y / ch.sum(hist_Y)
+    
+    # Compute the joint probability
+    pxy = joint_hist / ch.sum(joint_hist)
+
+    def entropy(p):
+        # Avoid log(0)
+        return -ch.sum(p * ch.log(p + 1e-8))
+    
+    # Compute the marginal entropies
+    Hx = entropy(px)
+    Hy = entropy(py)
+    
+    # Compute the joint entropy
+    Hxy = entropy(pxy)
+    
+    # Compute the mutual information
+    MI = Hx + Hy - Hxy
+    
+    # Compute the normalized mutual information
+    NMI = MI / ch.sqrt(Hx * Hy)
+    
+    return NMI
+
 
 class MSEandCosine(ch.nn.Module):
     def __init__(self, alpha: float=0.5):
@@ -251,10 +285,13 @@ class MSEandCosine(ch.nn.Module):
 
 
 class NormalizedImageQuality(ch.nn.Module):
+    """
+        A differentiable image quality metric that combines PSNR, SSIM, LPIPS, NMI, and Aesthetics/Artifacts scores.
+        Normalized according to the weights providedi n evaluation section of the competition.
+    """
     def __init__(self, device: str = "cuda"):
         super().__init__()
         self.device = device
-        # self.fid = torch_metrics.FrechetInceptionDistance(device)
         
         self.lpips = lpips.LPIPS(net='alex')
         self.lpips.to(self.device)
@@ -263,23 +300,6 @@ class NormalizedImageQuality(ch.nn.Module):
 
         self.target_aesthetics = None
         self.target_artifacts = None
-    
-    def _nmi(self, x, y, bins: int = 100):
-        # Compute Normalized Mutual Information (NMI) between two images
-        # Use differentiable histogram form kornia
-        #_, hist_x = kornia.ehnance.image_histogram2d(x, n_bins=bins, min=0., max=1., return_pdf=True)
-        #_, hist_y = kornia.ehnance.image_histogram2d(y, n_bins=bins, min=0., max=1., return_pdf=True)
-
-        def entropy(p):
-            p = p + 1e-10  # To avoid log(0)
-            return -ch.sum(p * ch.log(p))
-
-        hists = differentiable_histogram(ch.cat([x, y], dim=0), bins=bins, min=0., max=1.)
-        H0 = entropy(np.sum(hist, axis=0))
-        H1 = entropy(np.sum(hist, axis=1))
-        H01 = entropy(np.reshape(hist, -1))
-
-        # return (H0 + H1) / H01
 
     def _compute_aesthetics_and_artifacts_scores(self, image):
         vision_model, rating_model, artifacts_model = self.aesthetic_models
@@ -320,12 +340,17 @@ class NormalizedImageQuality(ch.nn.Module):
         """
             Output here is generated image, target is original image
         """
-        #fid_score = self.fid.compute(output, target)
+        outputs_aesthetics, outputs_artifacts = self._compute_aesthetics_and_artifacts_scores(output)
+        final_score = -4.5e-2 * outputs_aesthetics + 1.44e-1 * outputs_artifacts
+        return final_score
 
         lpips_score = self._lpips(output, target)
         psnr_score = self._psnr(output, target)
         ssim_score = self._ssim(output, target)
         outputs_aesthetics, outputs_artifacts = self._compute_aesthetics_and_artifacts_scores(output)
+
+        # Differentiable NMI is too slow, so ignoring it for now
+        # nmi_score = differentiable_nmi(output, target)
 
         if self.target_aesthetics is None:
             self.target_aesthetics, self.target_artifacts = self._compute_aesthetics_and_artifacts_scores(target)
@@ -335,21 +360,21 @@ class NormalizedImageQuality(ch.nn.Module):
 
         # Differentiable metrics!
         weighted_scores = [
-            # (fid_score, 1.53e-3),  # FID
-            # (None, 5.07e-3), # CLIP FID
-            (psnr_score, -2.22e-3), # PSNR, works
-            (ssim_score, -1.13e-1), # SSIM, works
-            # (None, -9.88e-2), # NMI
-            (lpips_score, 3.41e-1), # LPIPS, works
-            (delta_aesthetics, 4.5e-2), # Delta-Aesthetics, works
-            (delta_artifacts, -1.44e-1), # Delta-Artifacts, works
+            (psnr_score, -2.22e-3), # PSNR
+            (ssim_score, -1.13e-1), # SSIM
+            # (nmi_score, -9.88e-2), # NMI
+            (lpips_score, 3.41e-1), # LPIPS
+            (delta_aesthetics, 4.5e-2), # Delta-Aesthetics
+            (delta_artifacts, -1.44e-1), # Delta-Artifacts
         ]
 
+        # FID-based metrics are based on distributional similarity, so not included here
+
         # Aggregate weighted scores
-        # print([i[0] for i in weighted_scores])
         final_score = sum([score * weight for score, weight in weighted_scores])
-        # We want to minimize this score
-        return final_score
+
+        # Want to be close to zero
+        return ch.abs(final_score)
 
 
 def smimifgsm_attack(aux_models: dict,
@@ -362,16 +387,17 @@ def smimifgsm_attack(aux_models: dict,
                      target=None,
                      mixup_data=None,
                      image_quality_metric: ch.nn.Module = None,
-                     image_quality_multiplier: float = -1e6,
-                     device: str = "cuda"):
+                     image_quality_multiplier: float = -1e3,
+                     device: str = "cuda",
+                     verbose: bool = False):
     """
         Adapted from SMIMIFGSM implementation in https://github.com/iamgroot42/blackboxsok
         Supports optimization to fool some target classifier, or simply maximize distance from some embedding
     """
-    mse_criterion = MSEandCosine(alpha=0) # Ignore cosine similarity for the time being
+    adv_criterion = MSEandCosine(alpha=0.5) # Ignore cosine similarity for the time being
     classification_criterion = ch.nn.CrossEntropyLoss()
     
-    class_one = ch.tensor([1]).to(device)
+    class_one = ch.tensor([0]).to(device)
     classification_ease_factor = 0.05
 
     if not isinstance(aux_models, dict):
@@ -407,22 +433,21 @@ def smimifgsm_attack(aux_models: dict,
     i = 0
     while i < n_iters:
 
-        # """
-        with ch.no_grad():
-            losses = []
-            for model_name in aux_models:
-                model, model_type = aux_models[model_name]
-                output = model(adv)
-                if model_type == "embed":
-                    loss_ = mse_criterion(output, target[model_name])
-                else:
-                    loss_ = classification_criterion(output, class_one) * classification_ease_factor
-                losses.append(loss_.item())
+        if verbose:
+            with ch.no_grad():
+                losses = []
+                for model_name in aux_models:
+                    model, model_type = aux_models[model_name]
+                    output = model(adv)
+                    if model_type == "embed":
+                        loss_ = adv_criterion(output, target[model_name])
+                    else:
+                        loss_ = classification_criterion(output, class_one) * classification_ease_factor
+                    losses.append(loss_.item())
 
-            if image_quality_metric is not None:
-                qual_loss = image_quality_metric(adv, x_orig).item()
-            print(f"Step {i+1}/{n_iters} | Quality Loss:", qual_loss, "| Loss:", np.mean(losses), "| Losses:", losses)
-        # """
+                if image_quality_metric is not None:
+                    qual_loss = image_quality_metric(adv, x_orig).item()
+                print(f"Step {i+1}/{n_iters} | Quality Loss:", qual_loss, "| Loss:", np.mean(losses), "| Losses:", losses)
 
         Gradients = []
         if adv.grad is not None:
@@ -443,7 +468,7 @@ def smimifgsm_attack(aux_models: dict,
                     transformed_image, tf_info = transformation_function(adv, resize_to=resize_to, mixup_data=mixup_data)
                     embed_output = model(transformed_image)
                     # Use target embedding specific to this model
-                    loss += mse_criterion(embed_output.clone(), target[model_name]) / n_model_embed
+                    loss += adv_criterion(embed_output.clone(), target[model_name]) / n_model_embed
                 else:
                     transformed_image, tf_info = transformation_function(adv, resize_to=resize_to, mixup_data=mixup_data)
                     output += model(transformed_image) / n_model_clasify
@@ -460,6 +485,9 @@ def smimifgsm_attack(aux_models: dict,
 
             loss.backward()
             Gradients.append(adv.grad.data)
+
+            gc.collect()
+            ch.cuda.empty_cache()
 
         for gradient in Gradients:
             grad += lamda * gradient
