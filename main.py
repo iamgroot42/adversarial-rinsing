@@ -58,7 +58,7 @@ def main(config: ExperimentConfig):
 def read_images(track: str):
     name_mapping = {
         "black": "BlackBox",
-        "biege": "BeigeBox",
+        "beige": "BeigeBox",
         "test": "Test"
     }
     images_path = os.path.join("data", f"Neurips24_ETI_{name_mapping[track]}")

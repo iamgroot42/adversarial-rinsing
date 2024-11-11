@@ -1,0 +1,4 @@
+aggregation: mean
+track: black
+methods: [lowpass]
+submission: fft100_wavelet2

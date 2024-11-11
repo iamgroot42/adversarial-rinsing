@@ -148,7 +148,7 @@ class VAERemoval(Removal):
         # resnet_18 = resnet18(weights=ResNet18_Weights.DEFAULT).to(self.device)
 
         # TODO: Do not hardcode this path
-        MODELS_PATH_ = "/home/groot/work/erasing-the-invisible/models/wmd"
+        MODELS_PATH_ = "./models/wmd"
         # Load up watermark detection model(s)
         stable_sig = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_stable_sig.pth"), self.device)
         tree_ring = load_surrogate_model(os.path.join(MODELS_PATH_, f"adv_cls_unwm_wm_tree_ring.pth"), self.device)
@@ -169,7 +169,7 @@ class VAERemoval(Removal):
         }
 
         self.mixup_images = []
-        mixup_data_path = "/home/groot/work/erasing-the-invisible/augmentation_data"
+        mixup_data_path = "./augmentation_data"
         # Open and read all .jpg images in mixup_data_path
         for filename in os.listdir(mixup_data_path):
             if filename.endswith(".jpg"):
@@ -225,10 +225,8 @@ class VAERemoval(Removal):
                                                   eps=eps,
                                                   n_iters=n_iters,
                                                   num_transformations=self.attack_config.num_transformations,
-                                                #   num_transformations=10,
                                                   proportional_step_size=False,
                                                   step_size_alpha=self.attack_config.step_size_alpha,
-                                                #   step_size_alpha=5e-4,
                                                   target=target_embeddings,
                                                   mixup_data=self.mixup_images,
                                                   image_quality_metric=self.image_quality_metric,
@@ -254,6 +252,9 @@ class VAERemoval(Removal):
         eps_list = self.attack_config.eps_list
         n_iters_list = self.attack_config.n_iters
         decoding_model_list = self.attack_config.decoding_models
+
+        if len(eps_list) != len(n_iters_list) or len(eps_list) != len(decoding_model_list):
+            raise ValueError("Length of eps_list, n_iters_list and decoding_model_list must be the same")
 
         for (eps, n_iters, decoding_model) in zip(eps_list, n_iters_list, decoding_model_list):
             perturbed_image_tensor = self._rinse_cycle(perturbed_image_tensor,

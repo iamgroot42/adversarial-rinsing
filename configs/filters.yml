@@ -1,0 +1,4 @@
+aggregation: mean
+track: black
+methods: [filters]
+submission: gau_mot_bri_con_hue_sat_post

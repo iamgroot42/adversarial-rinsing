@@ -1,5 +1,4 @@
--e https://github.com/necla-ml/Diff-JPEG.git
-# -e https://github.com/iamgroot42/warm-up-kit.git
+git+https://github.com/necla-ml/Diff-JPEG.git
 diffusers==0.30.3
 torch==2.4.1
 transformers==4.44.2

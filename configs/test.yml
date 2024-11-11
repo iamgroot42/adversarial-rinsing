@@ -1,9 +1,0 @@
-track: test
-methods: [vae]
-aggregation: mean
-submission: blueberry
-skip_zip: true
-attack_config:
-  num_transformations: 20
-  eps_list: [1/255, 1/255]
-  n_iters: [5, 5]

@@ -1,10 +1,10 @@
 aggregation: mean
 track: black
 methods: [vae]
-submission: 20t_eps11_10_10_w10stab_imagequal
+submission: 20t_eps88_10_10_w10constab_imagequal
 attack_config:
-  num_transformations: 20
-  eps_list: [1/255, 1/255]
+  num_transformations: 25
+  eps_list: [8/255, 8/255]
   step_size_alpha: 1
   n_iters: [10, 10]
   decoding_models: ["waves", "openai/consistency-decoder"]
